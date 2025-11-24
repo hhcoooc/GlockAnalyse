@@ -334,25 +334,40 @@ if page == "🔥 实时涨幅榜分析":
                     st.subheader("📈 涨幅 vs RSI 散点图")
                     st.caption("RSI > 70 表示超买，可能回调；RSI < 30 表示超卖。")
                     
-                    # 使用 matplotlib 绘制散点图
-                    fig, ax = plt.subplots(figsize=(10, 6))
+                    # 过滤掉无效数据用于绘图
+                    plot_df = comp_df.dropna(subset=['RSI(14)', '涨跌幅%']).copy()
                     
-                    # 处理中文显示问题，这里用英文标签或代码代替
-                    scatter = ax.scatter(comp_df['RSI(14)'], comp_df['涨跌幅%'], c=comp_df['涨跌幅%'], cmap='viridis')
-                    plt.colorbar(scatter, label='Change %')
-                    
-                    # 添加标签
-                    for i, txt in enumerate(comp_df['代码']):
-                        ax.annotate(txt, (comp_df['RSI(14)'][i], comp_df['涨跌幅%'][i]), xytext=(5, 5), textcoords='offset points')
+                    if not plot_df.empty:
+                        # 使用 matplotlib 绘制散点图
+                        fig, ax = plt.subplots(figsize=(10, 6))
                         
-                    ax.set_xlabel('RSI (14)')
-                    ax.set_ylabel('Change %')
-                    ax.axvline(x=70, color='red', linestyle='--', label='Overbought (70)')
-                    ax.axvline(x=30, color='green', linestyle='--', label='Oversold (30)')
-                    ax.legend()
-                    ax.grid(True, alpha=0.3)
-                    
-                    st.pyplot(fig)
+                        # 确保数据为数值型
+                        x_data = pd.to_numeric(plot_df['RSI(14)'])
+                        y_data = pd.to_numeric(plot_df['涨跌幅%'])
+                        
+                        # 处理中文显示问题，这里用英文标签或代码代替
+                        scatter = ax.scatter(x_data, y_data, c=y_data, cmap='viridis')
+                        plt.colorbar(scatter, label='Change %')
+                        
+                        # 添加标签
+                        # 重置索引以确保循环对齐
+                        plot_df = plot_df.reset_index(drop=True)
+                        for i in range(len(plot_df)):
+                            txt = plot_df['代码'][i]
+                            x_val = x_data.iloc[i]
+                            y_val = y_data.iloc[i]
+                            ax.annotate(txt, (x_val, y_val), xytext=(5, 5), textcoords='offset points')
+                            
+                        ax.set_xlabel('RSI (14)')
+                        ax.set_ylabel('Change %')
+                        ax.axvline(x=70, color='red', linestyle='--', label='Overbought (70)')
+                        ax.axvline(x=30, color='green', linestyle='--', label='Oversold (30)')
+                        ax.legend()
+                        ax.grid(True, alpha=0.3)
+                        
+                        st.pyplot(fig)
+                    else:
+                        st.info("没有足够的有效RSI数据进行绘图。")
                 else:
                     st.warning("无法获取个股详细数据进行对比。")
             else:
