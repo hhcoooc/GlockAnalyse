@@ -9,23 +9,58 @@ import numpy as np
 
 # --- 核心分析逻辑 (合并自 advanced_analysis.py) ---
 
+def add_market_prefix(symbol):
+    """为新浪接口添加市场前缀"""
+    symbol = str(symbol)
+    if symbol.startswith('6'):
+        return 'sh' + symbol
+    elif symbol.startswith('0') or symbol.startswith('3'):
+        return 'sz' + symbol
+    elif symbol.startswith('8') or symbol.startswith('4') or symbol.startswith('9'):
+        return 'bj' + symbol
+    else:
+        return 'sh' + symbol # 默认尝试 sh
+
 def get_stock_data(symbol, start_date, end_date):
-    """获取数据"""
+    """获取数据 (支持多源降级)"""
     print(f"正在获取 {symbol} 的数据...")
+    
+    # 确保 symbol 是纯数字字符串
+    import re
+    clean_symbol = re.sub(r'\D', '', str(symbol))
+    
+    # 尝试 1: 东方财富 (stock_zh_a_hist)
     try:
-        # 确保 symbol 是纯数字字符串
-        import re
-        clean_symbol = re.sub(r'\D', '', str(symbol))
-        
         df = ak.stock_zh_a_hist(symbol=clean_symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
-        if df.empty: return None
+        if df.empty: raise Exception("Empty data from EastMoney")
+        
         df['日期'] = pd.to_datetime(df['日期'])
         df.set_index('日期', inplace=True)
         df = df.rename(columns={'开盘': 'Open', '最高': 'High', '最低': 'Low', '收盘': 'Close', '成交量': 'Volume'})
         return df
     except Exception as e:
-        print(f"获取数据出错: {e}")
-        return None
+        print(f"东方财富接口失败: {e}, 尝试新浪接口...")
+        
+        # 尝试 2: 新浪财经 (stock_zh_a_daily)
+        try:
+            prefixed_symbol = add_market_prefix(clean_symbol)
+            df = ak.stock_zh_a_daily(symbol=prefixed_symbol, start_date=start_date, end_date=end_date)
+            if df.empty: return None
+            
+            # 统一列名格式
+            df['date'] = pd.to_datetime(df['date'])
+            df.set_index('date', inplace=True)
+            df = df.rename(columns={
+                'open': 'Open', 
+                'high': 'High', 
+                'low': 'Low', 
+                'close': 'Close', 
+                'volume': 'Volume'
+            })
+            return df
+        except Exception as e2:
+            print(f"新浪接口也失败: {e2}")
+            return None
 
 def calculate_advanced_indicators(df):
     """
