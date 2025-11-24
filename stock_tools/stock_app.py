@@ -57,6 +57,12 @@ def get_stock_data(symbol, start_date, end_date):
                 'close': 'Close', 
                 'volume': 'Volume'
             })
+            
+            # 确保所有OHLCV列都是数值型
+            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
             return df
         except Exception as e2:
             print(f"新浪接口也失败: {e2}")
@@ -269,20 +275,17 @@ if page == "🔥 实时涨幅榜分析":
     st.header("🚀 实时涨幅榜前10名分析")
     st.markdown("获取当前市场涨幅最高的股票，并进行横向技术指标对比。")
     
+    # 初始化 Session State
+    if 'top_gainers_data' not in st.session_state:
+        st.session_state.top_gainers_data = None
+        st.session_state.top_gainers_source = None
+
     if st.button("刷新数据", type="primary"):
         with st.spinner("正在获取实时行情..."):
             top_df, source = get_top_gainers(10)
+            st.session_state.top_gainers_source = source
             
             if top_df is not None:
-                if source == "Sina":
-                    st.warning("⚠️ 注意：由于主数据源连接失败，当前使用备用数据源（新浪）。部分字段（换手率、量比、市盈率）可能不可用。")
-                
-                # 展示基础数据
-                st.subheader("📋 基础行情数据")
-                st.dataframe(top_df[['代码', '名称', '最新价', '涨跌幅', '成交量', '成交额', '换手率', '量比', '市盈率-动态']])
-                
-                st.subheader("📊 涨势横向对比")
-                
                 # 准备对比数据
                 comparison_data = []
                 
@@ -297,7 +300,7 @@ if page == "🔥 实时涨幅榜分析":
                     name = row['名称']
                     
                     # 获取个股历史数据进行技术分析
-                    # 获取最近100天数据用于计算指标
+                    # 获取最近150天数据用于计算指标
                     end_str = datetime.datetime.now().strftime("%Y%m%d")
                     start_str = (datetime.datetime.now() - datetime.timedelta(days=150)).strftime("%Y%m%d")
                     
@@ -325,53 +328,75 @@ if page == "🔥 实时涨幅榜分析":
                 
                 my_bar.empty()
                 
-                # 展示对比表格
-                if comparison_data:
-                    comp_df = pd.DataFrame(comparison_data)
-                    st.table(comp_df)
-                    
-                    # 简单的可视化对比
-                    st.subheader("📈 涨幅 vs RSI 散点图")
-                    st.caption("RSI > 70 表示超买，可能回调；RSI < 30 表示超卖。")
-                    
-                    # 过滤掉无效数据用于绘图
-                    plot_df = comp_df.dropna(subset=['RSI(14)', '涨跌幅%']).copy()
-                    
-                    if not plot_df.empty:
-                        # 使用 matplotlib 绘制散点图
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        
-                        # 确保数据为数值型
-                        x_data = pd.to_numeric(plot_df['RSI(14)'])
-                        y_data = pd.to_numeric(plot_df['涨跌幅%'])
-                        
-                        # 处理中文显示问题，这里用英文标签或代码代替
-                        scatter = ax.scatter(x_data, y_data, c=y_data, cmap='viridis')
-                        plt.colorbar(scatter, label='Change %')
-                        
-                        # 添加标签
-                        # 重置索引以确保循环对齐
-                        plot_df = plot_df.reset_index(drop=True)
-                        for i in range(len(plot_df)):
-                            txt = plot_df['代码'][i]
-                            x_val = x_data.iloc[i]
-                            y_val = y_data.iloc[i]
-                            ax.annotate(txt, (x_val, y_val), xytext=(5, 5), textcoords='offset points')
-                            
-                        ax.set_xlabel('RSI (14)')
-                        ax.set_ylabel('Change %')
-                        ax.axvline(x=70, color='red', linestyle='--', label='Overbought (70)')
-                        ax.axvline(x=30, color='green', linestyle='--', label='Oversold (30)')
-                        ax.legend()
-                        ax.grid(True, alpha=0.3)
-                        
-                        st.pyplot(fig)
-                    else:
-                        st.info("没有足够的有效RSI数据进行绘图。")
-                else:
-                    st.warning("无法获取个股详细数据进行对比。")
+                # 保存到 Session State
+                st.session_state.top_gainers_data = {
+                    'top_df': top_df,
+                    'comparison_data': comparison_data
+                }
             else:
                 st.error("获取实时行情失败。可能是由于网络连接问题或数据源（东方财富/新浪）暂时不可用。请稍后再试，或检查网络环境。")
+
+    # 从 Session State 渲染界面
+    if st.session_state.top_gainers_data:
+        data = st.session_state.top_gainers_data
+        top_df = data['top_df']
+        comparison_data = data['comparison_data']
+        source = st.session_state.top_gainers_source
+        
+        if source == "Sina":
+            st.warning("⚠️ 注意：由于主数据源连接失败，当前使用备用数据源（新浪）。部分字段（换手率、量比、市盈率）可能不可用。")
+        
+        # 展示基础数据
+        st.subheader("📋 基础行情数据")
+        st.dataframe(top_df[['代码', '名称', '最新价', '涨跌幅', '成交量', '成交额', '换手率', '量比', '市盈率-动态']])
+        
+        st.subheader("📊 涨势横向对比")
+        
+        # 展示对比表格
+        if comparison_data:
+            comp_df = pd.DataFrame(comparison_data)
+            st.table(comp_df)
+            
+            # 简单的可视化对比
+            st.subheader("📈 涨幅 vs RSI 散点图")
+            st.caption("RSI > 70 表示超买，可能回调；RSI < 30 表示超卖。")
+            
+            # 过滤掉无效数据用于绘图
+            plot_df = comp_df.dropna(subset=['RSI(14)', '涨跌幅%']).copy()
+            
+            if not plot_df.empty:
+                # 使用 matplotlib 绘制散点图
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # 确保数据为数值型
+                x_data = pd.to_numeric(plot_df['RSI(14)'])
+                y_data = pd.to_numeric(plot_df['涨跌幅%'])
+                
+                # 处理中文显示问题，这里用英文标签或代码代替
+                scatter = ax.scatter(x_data, y_data, c=y_data, cmap='viridis')
+                plt.colorbar(scatter, label='Change %')
+                
+                # 添加标签
+                # 重置索引以确保循环对齐
+                plot_df = plot_df.reset_index(drop=True)
+                for i in range(len(plot_df)):
+                    txt = plot_df['代码'][i]
+                    x_val = x_data.iloc[i]
+                    y_val = y_data.iloc[i]
+                    ax.annotate(txt, (x_val, y_val), xytext=(5, 5), textcoords='offset points')
+                    
+                ax.set_xlabel('RSI (14)')
+                ax.set_ylabel('Change %')
+                ax.axvline(x=70, color='red', linestyle='--', label='Overbought (70)')
+                ax.axvline(x=30, color='green', linestyle='--', label='Oversold (30)')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                
+                st.pyplot(fig)
+            else:
+                st.info("没有足够的有效RSI数据进行绘图。")
+        else:
+            st.warning("无法获取个股详细数据进行对比。")
 
 elif page == "个股详细分析":
     st.markdown("输入股票代码，一键获取**技术指标分析**、**买卖信号**及**历史回测报告**。")
