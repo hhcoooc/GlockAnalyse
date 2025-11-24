@@ -144,17 +144,36 @@ def run_strategy_backtest(df, initial_capital=100000):
 
 def get_top_gainers(top_n=10):
     """获取实时涨幅榜前N名"""
+    source = "EastMoney"
     try:
-        # 获取实时行情
+        # 尝试使用东方财富接口 (数据最全)
         df = ak.stock_zh_a_spot_em()
+    except Exception as e:
+        print(f"东方财富接口失败: {e}, 尝试使用新浪接口...")
+        try:
+            source = "Sina"
+            # 备用：使用新浪接口
+            df = ak.stock_zh_a_spot()
+            # 新浪接口列名映射与补充
+            # 新浪列: ['代码', '名称', '最新价', '涨跌额', '涨跌幅', '买入', '卖出', '昨收', '今开', '最高', '最低', '成交量', '成交额', '时间戳']
+            # 补充缺失列，防止后续报错
+            for col in ['换手率', '量比', '市盈率-动态']:
+                df[col] = 0.0
+        except Exception as e2:
+            print(f"新浪接口也失败: {e2}")
+            return None, None
+
+    try:
         # 按涨跌幅排序 (降序)
+        # 确保涨跌幅列是数值型
+        df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce')
         df = df.sort_values(by='涨跌幅', ascending=False)
         # 取前N名
         top_df = df.head(top_n).copy()
-        return top_df
+        return top_df, source
     except Exception as e:
-        print(f"获取涨幅榜出错: {e}")
-        return None
+        print(f"处理涨幅榜数据出错: {e}")
+        return None, None
 
 # --- Streamlit 界面逻辑 ---
 
@@ -209,9 +228,12 @@ if page == "🔥 实时涨幅榜分析":
     
     if st.button("刷新数据", type="primary"):
         with st.spinner("正在获取实时行情..."):
-            top_df = get_top_gainers(10)
+            top_df, source = get_top_gainers(10)
             
             if top_df is not None:
+                if source == "Sina":
+                    st.warning("⚠️ 注意：由于主数据源连接失败，当前使用备用数据源（新浪）。部分字段（换手率、量比、市盈率）可能不可用。")
+                
                 # 展示基础数据
                 st.subheader("📋 基础行情数据")
                 st.dataframe(top_df[['代码', '名称', '最新价', '涨跌幅', '成交量', '成交额', '换手率', '量比', '市盈率-动态']])
@@ -291,7 +313,7 @@ if page == "🔥 实时涨幅榜分析":
                 else:
                     st.warning("无法获取个股详细数据进行对比。")
             else:
-                st.error("获取实时行情失败，请稍后再试。")
+                st.error("获取实时行情失败。可能是由于网络连接问题或数据源（东方财富/新浪）暂时不可用。请稍后再试，或检查网络环境。")
 
 elif page == "个股详细分析":
     st.markdown("输入股票代码，一键获取**技术指标分析**、**买卖信号**及**历史回测报告**。")
