@@ -110,6 +110,9 @@ def calculate_advanced_indicators(df):
     
     # 4. 均线
     df['MA20'] = df.ta.sma(length=20)
+
+    # 5. RSI (14)
+    df['RSI'] = df.ta.rsi(length=14)
     
     return df
 
