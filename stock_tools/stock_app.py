@@ -3,7 +3,146 @@ import pandas as pd
 import mplfinance as mpf
 import datetime
 import matplotlib.pyplot as plt
-from advanced_analysis import get_stock_data, calculate_advanced_indicators, run_strategy_backtest
+import akshare as ak
+import pandas_ta as ta
+import numpy as np
+
+# --- 核心分析逻辑 (合并自 advanced_analysis.py) ---
+
+def get_stock_data(symbol, start_date, end_date):
+    """获取数据"""
+    print(f"正在获取 {symbol} 的数据...")
+    try:
+        df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
+        if df.empty: return None
+        df['日期'] = pd.to_datetime(df['日期'])
+        df.set_index('日期', inplace=True)
+        df = df.rename(columns={'开盘': 'Open', '最高': 'High', '最低': 'Low', '收盘': 'Close', '成交量': 'Volume'})
+        return df
+    except Exception as e:
+        print(f"获取数据出错: {e}")
+        return None
+
+def calculate_advanced_indicators(df):
+    """
+    计算高级技术指标：MACD, KDJ, 布林带
+    """
+    # 1. MACD (12, 26, 9)
+    macd = df.ta.macd(fast=12, slow=26, signal=9)
+    if macd is not None:
+        # 动态查找列名，避免硬编码导致的 KeyError
+        macd_col = [c for c in macd.columns if c.startswith('MACD_')][0]
+        signal_col = [c for c in macd.columns if c.startswith('MACDs_')][0]
+        hist_col = [c for c in macd.columns if c.startswith('MACDh_')][0]
+        
+        df['MACD'] = macd[macd_col]
+        df['MACD_signal'] = macd[signal_col]
+        df['MACD_hist'] = macd[hist_col]
+
+    # 2. Bollinger Bands (20, 2)
+    bbands = df.ta.bbands(length=20, std=2)
+    if bbands is not None:
+        # 动态查找列名
+        bbu_col = [c for c in bbands.columns if c.startswith('BBU')][0]
+        bbm_col = [c for c in bbands.columns if c.startswith('BBM')][0]
+        bbl_col = [c for c in bbands.columns if c.startswith('BBL')][0]
+        
+        df['BBU'] = bbands[bbu_col]
+        df['BBM'] = bbands[bbm_col]
+        df['BBL'] = bbands[bbl_col]
+
+    # 3. KDJ (9, 3)
+    kdj = df.ta.kdj(length=9, signal=3)
+    if kdj is not None:
+        # 动态查找列名
+        k_col = [c for c in kdj.columns if c.startswith('K_')][0]
+        d_col = [c for c in kdj.columns if c.startswith('D_')][0]
+        j_col = [c for c in kdj.columns if c.startswith('J_')][0]
+        
+        df['K'] = kdj[k_col]
+        df['D'] = kdj[d_col]
+        df['J'] = kdj[j_col]
+    
+    # 4. 均线
+    df['MA20'] = df.ta.sma(length=20)
+    
+    return df
+
+def run_strategy_backtest(df, initial_capital=100000):
+    """
+    策略回测：布林带趋势突破策略
+    """
+    cash = initial_capital
+    position = 0
+    commission_rate = 0.0003 # 万三佣金
+    
+    trade_log = []
+    equity_curve = []
+    buy_signals = []
+    sell_signals = []
+    
+    for i in range(len(df)):
+        price = df.iloc[i]['Close']
+        date = df.index[i]
+        
+        # 信号标记 (默认 NaN)
+        buy_mark = np.nan
+        sell_mark = np.nan
+        
+        # 确保有足够数据计算指标
+        if i < 20:
+            equity_curve.append(cash)
+            buy_signals.append(np.nan)
+            sell_signals.append(np.nan)
+            continue
+            
+        # 获取当日指标
+        bbu = df.iloc[i]['BBU'] # 上轨
+        bbm = df.iloc[i]['BBM'] # 中轨 (MA20)
+        macd = df.iloc[i]['MACD']
+        
+        # --- 交易逻辑 ---
+        
+        # 买入条件: 空仓 + 收盘价突破上轨 + MACD为正
+        if position == 0:
+            if price > bbu and macd > 0:
+                # 全仓买入 (按100股取整)
+                shares = int(cash / price / 100) * 100
+                if shares > 0:
+                    cost = shares * price
+                    fee = cost * commission_rate
+                    cash -= (cost + fee)
+                    position = shares
+                    trade_log.append({'日期': date, '操作': '买入', '价格': price, '数量': shares})
+                    buy_mark = price * 0.98 # 图表标记位置
+        
+        # 卖出条件: 持仓 + 收盘价跌破中轨 (止盈/止损)
+        elif position > 0:
+            if price < bbm:
+                revenue = position * price
+                fee = revenue * commission_rate
+                cash += (revenue - fee)
+                trade_log.append({'日期': date, '操作': '卖出', '价格': price, '数量': position})
+                position = 0
+                sell_mark = price * 1.02 # 图表标记位置
+        
+        # 记录资产净值
+        current_equity = cash + (position * price)
+        equity_curve.append(current_equity)
+        
+        buy_signals.append(buy_mark)
+        sell_signals.append(sell_mark)
+        
+    df['Equity'] = equity_curve
+    df['Buy_Signal'] = buy_signals
+    df['Sell_Signal'] = sell_signals
+    
+    # 计算回测指标
+    total_return = (equity_curve[-1] - initial_capital) / initial_capital * 100
+    
+    return df, trade_log, total_return
+
+# --- Streamlit 界面逻辑 ---
 
 # 设置页面配置
 st.set_page_config(page_title="A股智能分析工具", layout="wide")
