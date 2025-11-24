@@ -142,32 +142,26 @@ def run_strategy_backtest(df, initial_capital=100000):
     
     return df, trade_log, total_return
 
+def get_top_gainers(top_n=10):
+    """获取实时涨幅榜前N名"""
+    try:
+        # 获取实时行情
+        df = ak.stock_zh_a_spot_em()
+        # 按涨跌幅排序 (降序)
+        df = df.sort_values(by='涨跌幅', ascending=False)
+        # 取前N名
+        top_df = df.head(top_n).copy()
+        return top_df
+    except Exception as e:
+        print(f"获取涨幅榜出错: {e}")
+        return None
+
 # --- Streamlit 界面逻辑 ---
 
 # 设置页面配置
 st.set_page_config(page_title="A股智能分析工具", layout="wide")
 
 st.title("📈 A股智能分析与回测系统")
-st.markdown("输入股票代码，一键获取**技术指标分析**、**买卖信号**及**历史回测报告**。")
-
-# 侧边栏输入
-with st.sidebar:
-    st.header("参数设置")
-    symbol = st.text_input("股票代码", value="300034", help="请输入6位A股代码，如 600519")
-    
-    # 日期范围选择
-    today = datetime.datetime.now()
-    start_date_default = today - datetime.timedelta(days=365*2)
-    
-    date_range = st.date_input(
-        "回测时间范围",
-        value=(start_date_default, today),
-        max_value=today
-    )
-    
-    initial_capital = st.number_input("初始资金", value=100000, step=10000)
-    
-    run_btn = st.button("开始分析", type="primary")
 
 def plot_streamlit_chart(df, symbol, trade_log):
     """
@@ -206,81 +200,196 @@ def plot_streamlit_chart(df, symbol, trade_log):
     
     return fig
 
-if run_btn:
-    if len(date_range) != 2:
-        st.error("请选择完整的开始和结束日期。")
-    else:
-        start_str = date_range[0].strftime("%Y%m%d")
-        end_str = date_range[1].strftime("%Y%m%d")
-        
-        with st.spinner(f"正在获取 {symbol} 数据并进行量化分析..."):
-            df = get_stock_data(symbol, start_str, end_str)
+# 侧边栏导航
+page = st.sidebar.radio("功能选择", ["个股详细分析", "🔥 实时涨幅榜分析"])
+
+if page == "🔥 实时涨幅榜分析":
+    st.header("🚀 实时涨幅榜前10名分析")
+    st.markdown("获取当前市场涨幅最高的股票，并进行横向技术指标对比。")
+    
+    if st.button("刷新数据", type="primary"):
+        with st.spinner("正在获取实时行情..."):
+            top_df = get_top_gainers(10)
             
-            if df is None or df.empty:
-                st.error(f"未获取到 {symbol} 的数据，请检查代码是否正确。")
-            else:
-                # 1. 计算指标
-                df = calculate_advanced_indicators(df)
+            if top_df is not None:
+                # 展示基础数据
+                st.subheader("📋 基础行情数据")
+                st.dataframe(top_df[['代码', '名称', '最新价', '涨跌幅', '成交量', '成交额', '换手率', '量比', '市盈率-动态']])
                 
-                # 2. 运行回测
-                df, trade_log, total_return = run_strategy_backtest(df, initial_capital)
+                st.subheader("📊 涨势横向对比")
                 
-                # --- 结果展示 ---
+                # 准备对比数据
+                comparison_data = []
                 
-                # 顶部指标卡片
-                col1, col2, col3 = st.columns(3)
-                latest = df.iloc[-1]
-                latest_close = latest['Close']
-                prev_close = df.iloc[-2]['Close']
-                change = (latest_close - prev_close) / prev_close * 100
+                # 进度条
+                progress_text = "正在进行技术分析..."
+                my_bar = st.progress(0, text=progress_text)
                 
-                col1.metric("当前价格", f"{latest_close:.2f}", f"{change:.2f}%")
-                col2.metric("策略收益率", f"{total_return:.2f}%", delta_color="normal")
-                col3.metric("交易次数", f"{len(trade_log)}")
+                total_stocks = len(top_df)
                 
-                # 图表区域
-                st.subheader("📊 技术分析图表")
-                fig = plot_streamlit_chart(df, symbol, trade_log)
-                st.pyplot(fig)
-                
-                # 信号解读区域
-                st.subheader("🤖 智能信号解读")
-                
-                # 综合打分逻辑 (复用 advanced_analysis 的逻辑)
-                score = 0
-                reasons = []
-                if latest['Close'] > latest['BBM']:
-                    score += 1
-                    reasons.append("股价位于布林中轨上方 (强势)")
-                if latest['Close'] > latest['BBU']:
-                    score += 1
-                    reasons.append("股价突破布林上轨 (极强/可能超买)")
-                if latest['K'] > latest['D'] and latest['K'] < 80:
-                    score += 1
-                    reasons.append("KDJ 金叉且未钝化")
-                elif latest['J'] > 100:
-                    score -= 1
-                    reasons.append("KDJ J值过高 (超买风险)")
-                if latest['MACD'] > latest['MACD_signal']:
-                    score += 1
-                    reasons.append("MACD 处于多头状态")
-                
-                if score >= 3:
-                    st.success(f"**综合结论: 信号偏强 (得分 {score}/4)**，建议关注。")
-                elif score <= 1:
-                    st.warning(f"**综合结论: 信号偏弱 (得分 {score}/4)**，建议观望。")
-                else:
-                    st.info(f"**综合结论: 震荡行情 (得分 {score}/4)**，方向不明。")
+                for i, (idx, row) in enumerate(top_df.iterrows()):
+                    symbol = row['代码']
+                    name = row['名称']
                     
-                for r in reasons:
-                    st.write(f"- {r}")
+                    # 获取个股历史数据进行技术分析
+                    # 获取最近100天数据用于计算指标
+                    end_str = datetime.datetime.now().strftime("%Y%m%d")
+                    start_str = (datetime.datetime.now() - datetime.timedelta(days=150)).strftime("%Y%m%d")
+                    
+                    stock_df = get_stock_data(symbol, start_str, end_str)
+                    
+                    if stock_df is not None and not stock_df.empty:
+                        # 计算指标
+                        stock_df = calculate_advanced_indicators(stock_df)
+                        latest = stock_df.iloc[-1]
+                        
+                        # 收集关键指标
+                        comparison_data.append({
+                            '代码': symbol,
+                            '名称': name,
+                            '最新价': row['最新价'],
+                            '涨跌幅%': row['涨跌幅'],
+                            'RSI(14)': round(latest['RSI'], 2) if 'RSI' in latest else None,
+                            'MACD': round(latest['MACD'], 3) if 'MACD' in latest else None,
+                            '布林位置': '上轨上方' if latest['Close'] > latest['BBU'] else ('中轨上方' if latest['Close'] > latest['BBM'] else '弱势区域'),
+                            'KDJ状态': '金叉' if latest['K'] > latest['D'] else '死叉'
+                        })
+                    
+                    # 更新进度
+                    my_bar.progress((i + 1) / total_stocks, text=f"正在分析 {name} ({symbol})...")
                 
-                # 交易记录
-                with st.expander("查看详细交易记录"):
-                    if trade_log:
-                        log_df = pd.DataFrame(trade_log)
-                        # 格式化日期
-                        log_df['日期'] = log_df['日期'].apply(lambda x: x.strftime('%Y-%m-%d'))
-                        st.table(log_df)
+                my_bar.empty()
+                
+                # 展示对比表格
+                if comparison_data:
+                    comp_df = pd.DataFrame(comparison_data)
+                    st.table(comp_df)
+                    
+                    # 简单的可视化对比
+                    st.subheader("📈 涨幅 vs RSI 散点图")
+                    st.caption("RSI > 70 表示超买，可能回调；RSI < 30 表示超卖。")
+                    
+                    # 使用 matplotlib 绘制散点图
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    
+                    # 处理中文显示问题，这里用英文标签或代码代替
+                    scatter = ax.scatter(comp_df['RSI(14)'], comp_df['涨跌幅%'], c=comp_df['涨跌幅%'], cmap='viridis')
+                    plt.colorbar(scatter, label='Change %')
+                    
+                    # 添加标签
+                    for i, txt in enumerate(comp_df['代码']):
+                        ax.annotate(txt, (comp_df['RSI(14)'][i], comp_df['涨跌幅%'][i]), xytext=(5, 5), textcoords='offset points')
+                        
+                    ax.set_xlabel('RSI (14)')
+                    ax.set_ylabel('Change %')
+                    ax.axvline(x=70, color='red', linestyle='--', label='Overbought (70)')
+                    ax.axvline(x=30, color='green', linestyle='--', label='Oversold (30)')
+                    ax.legend()
+                    ax.grid(True, alpha=0.3)
+                    
+                    st.pyplot(fig)
+                else:
+                    st.warning("无法获取个股详细数据进行对比。")
+            else:
+                st.error("获取实时行情失败，请稍后再试。")
+
+elif page == "个股详细分析":
+    st.markdown("输入股票代码，一键获取**技术指标分析**、**买卖信号**及**历史回测报告**。")
+
+    # 侧边栏输入
+    with st.sidebar:
+        st.header("参数设置")
+        symbol = st.text_input("股票代码", value="300034", help="请输入6位A股代码，如 600519")
+        
+        # 日期范围选择
+        today = datetime.datetime.now()
+        start_date_default = today - datetime.timedelta(days=365*2)
+        
+        date_range = st.date_input(
+            "回测时间范围",
+            value=(start_date_default, today),
+            max_value=today
+        )
+        
+        initial_capital = st.number_input("初始资金", value=100000, step=10000)
+        
+        run_btn = st.button("开始分析", type="primary")
+
+    if run_btn:
+        if len(date_range) != 2:
+            st.error("请选择完整的开始和结束日期。")
+        else:
+            start_str = date_range[0].strftime("%Y%m%d")
+            end_str = date_range[1].strftime("%Y%m%d")
+            
+            with st.spinner(f"正在获取 {symbol} 数据并进行量化分析..."):
+                df = get_stock_data(symbol, start_str, end_str)
+                
+                if df is None or df.empty:
+                    st.error(f"未获取到 {symbol} 的数据，请检查代码是否正确。")
+                else:
+                    # 1. 计算指标
+                    df = calculate_advanced_indicators(df)
+                    
+                    # 2. 运行回测
+                    df, trade_log, total_return = run_strategy_backtest(df, initial_capital)
+                    
+                    # --- 结果展示 ---
+                    
+                    # 顶部指标卡片
+                    col1, col2, col3 = st.columns(3)
+                    latest = df.iloc[-1]
+                    latest_close = latest['Close']
+                    prev_close = df.iloc[-2]['Close']
+                    change = (latest_close - prev_close) / prev_close * 100
+                    
+                    col1.metric("当前价格", f"{latest_close:.2f}", f"{change:.2f}%")
+                    col2.metric("策略收益率", f"{total_return:.2f}%", delta_color="normal")
+                    col3.metric("交易次数", f"{len(trade_log)}")
+                    
+                    # 图表区域
+                    st.subheader("📊 技术分析图表")
+                    fig = plot_streamlit_chart(df, symbol, trade_log)
+                    st.pyplot(fig)
+                    
+                    # 信号解读区域
+                    st.subheader("🤖 智能信号解读")
+                    
+                    # 综合打分逻辑 (复用 advanced_analysis 的逻辑)
+                    score = 0
+                    reasons = []
+                    if latest['Close'] > latest['BBM']:
+                        score += 1
+                        reasons.append("股价位于布林中轨上方 (强势)")
+                    if latest['Close'] > latest['BBU']:
+                        score += 1
+                        reasons.append("股价突破布林上轨 (极强/可能超买)")
+                    if latest['K'] > latest['D'] and latest['K'] < 80:
+                        score += 1
+                        reasons.append("KDJ 金叉且未钝化")
+                    elif latest['J'] > 100:
+                        score -= 1
+                        reasons.append("KDJ J值过高 (超买风险)")
+                    if latest['MACD'] > latest['MACD_signal']:
+                        score += 1
+                        reasons.append("MACD 处于多头状态")
+                    
+                    if score >= 3:
+                        st.success(f"**综合结论: 信号偏强 (得分 {score}/4)**，建议关注。")
+                    elif score <= 1:
+                        st.warning(f"**综合结论: 信号偏弱 (得分 {score}/4)**，建议观望。")
                     else:
-                        st.write("在此期间无交易触发。")
+                        st.info(f"**综合结论: 震荡行情 (得分 {score}/4)**，方向不明。")
+                        
+                    for r in reasons:
+                        st.write(f"- {r}")
+                    
+                    # 交易记录
+                    with st.expander("查看详细交易记录"):
+                        if trade_log:
+                            log_df = pd.DataFrame(trade_log)
+                            # 格式化日期
+                            log_df['日期'] = log_df['日期'].apply(lambda x: x.strftime('%Y-%m-%d'))
+                            st.table(log_df)
+                        else:
+                            st.write("在此期间无交易触发。")
