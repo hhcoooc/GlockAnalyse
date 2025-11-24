@@ -13,7 +13,11 @@ def get_stock_data(symbol, start_date, end_date):
     """获取数据"""
     print(f"正在获取 {symbol} 的数据...")
     try:
-        df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
+        # 确保 symbol 是纯数字字符串
+        import re
+        clean_symbol = re.sub(r'\D', '', str(symbol))
+        
+        df = ak.stock_zh_a_hist(symbol=clean_symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
         if df.empty: return None
         df['日期'] = pd.to_datetime(df['日期'])
         df.set_index('日期', inplace=True)
@@ -164,6 +168,10 @@ def get_top_gainers(top_n=10):
             return None, None
 
     try:
+        # 如果是新浪数据源，代码可能带有前缀 (如 bj920000)，需要清洗为纯数字
+        if source == "Sina":
+            df['代码'] = df['代码'].astype(str).str.extract(r'(\d+)', expand=False)
+
         # 按涨跌幅排序 (降序)
         # 确保涨跌幅列是数值型
         df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce')
