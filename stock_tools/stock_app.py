@@ -72,47 +72,69 @@ def calculate_advanced_indicators(df):
     """
     计算高级技术指标：MACD, KDJ, 布林带
     """
+    # 确保数据量足够
+    if df is None or len(df) < 2:
+        return df
+
     # 1. MACD (12, 26, 9)
-    macd = df.ta.macd(fast=12, slow=26, signal=9)
-    if macd is not None:
-        # 动态查找列名，避免硬编码导致的 KeyError
-        macd_col = [c for c in macd.columns if c.startswith('MACD_')][0]
-        signal_col = [c for c in macd.columns if c.startswith('MACDs_')][0]
-        hist_col = [c for c in macd.columns if c.startswith('MACDh_')][0]
-        
-        df['MACD'] = macd[macd_col]
-        df['MACD_signal'] = macd[signal_col]
-        df['MACD_hist'] = macd[hist_col]
+    try:
+        macd = df.ta.macd(fast=12, slow=26, signal=9)
+        if macd is not None and not macd.empty:
+            # 动态查找列名，避免硬编码导致的 KeyError
+            macd_cols = [c for c in macd.columns if c.startswith('MACD_')]
+            signal_cols = [c for c in macd.columns if c.startswith('MACDs_')]
+            hist_cols = [c for c in macd.columns if c.startswith('MACDh_')]
+            
+            if macd_cols and signal_cols and hist_cols:
+                df['MACD'] = macd[macd_cols[0]]
+                df['MACD_signal'] = macd[signal_cols[0]]
+                df['MACD_hist'] = macd[hist_cols[0]]
+    except Exception as e:
+        print(f"MACD calculation error: {e}")
 
     # 2. Bollinger Bands (20, 2)
-    bbands = df.ta.bbands(length=20, std=2)
-    if bbands is not None:
-        # 动态查找列名
-        bbu_col = [c for c in bbands.columns if c.startswith('BBU')][0]
-        bbm_col = [c for c in bbands.columns if c.startswith('BBM')][0]
-        bbl_col = [c for c in bbands.columns if c.startswith('BBL')][0]
-        
-        df['BBU'] = bbands[bbu_col]
-        df['BBM'] = bbands[bbm_col]
-        df['BBL'] = bbands[bbl_col]
+    try:
+        bbands = df.ta.bbands(length=20, std=2)
+        if bbands is not None and not bbands.empty:
+            # 动态查找列名
+            bbu_cols = [c for c in bbands.columns if c.startswith('BBU')]
+            bbm_cols = [c for c in bbands.columns if c.startswith('BBM')]
+            bbl_cols = [c for c in bbands.columns if c.startswith('BBL')]
+            
+            if bbu_cols and bbm_cols and bbl_cols:
+                df['BBU'] = bbands[bbu_cols[0]]
+                df['BBM'] = bbands[bbm_cols[0]]
+                df['BBL'] = bbands[bbl_cols[0]]
+    except Exception as e:
+        print(f"BBands calculation error: {e}")
 
     # 3. KDJ (9, 3)
-    kdj = df.ta.kdj(length=9, signal=3)
-    if kdj is not None:
-        # 动态查找列名
-        k_col = [c for c in kdj.columns if c.startswith('K_')][0]
-        d_col = [c for c in kdj.columns if c.startswith('D_')][0]
-        j_col = [c for c in kdj.columns if c.startswith('J_')][0]
-        
-        df['K'] = kdj[k_col]
-        df['D'] = kdj[d_col]
-        df['J'] = kdj[j_col]
+    try:
+        kdj = df.ta.kdj(length=9, signal=3)
+        if kdj is not None and not kdj.empty:
+            # 动态查找列名
+            k_cols = [c for c in kdj.columns if c.startswith('K_')]
+            d_cols = [c for c in kdj.columns if c.startswith('D_')]
+            j_cols = [c for c in kdj.columns if c.startswith('J_')]
+            
+            if k_cols and d_cols and j_cols:
+                df['K'] = kdj[k_cols[0]]
+                df['D'] = kdj[d_cols[0]]
+                df['J'] = kdj[j_cols[0]]
+    except Exception as e:
+        print(f"KDJ calculation error: {e}")
     
     # 4. 均线
-    df['MA20'] = df.ta.sma(length=20)
+    try:
+        df['MA20'] = df.ta.sma(length=20)
+    except:
+        pass
 
     # 5. RSI (14)
-    df['RSI'] = df.ta.rsi(length=14)
+    try:
+        df['RSI'] = df.ta.rsi(length=14)
+    except:
+        pass
     
     return df
 
