@@ -336,6 +336,21 @@ if page == "🔥 实时涨幅榜分析":
                         stock_df = calculate_advanced_indicators(stock_df)
                         latest = stock_df.iloc[-1]
                         
+                        # 安全获取布林带状态
+                        bb_status = "未知"
+                        if 'BBU' in latest and 'BBM' in latest and 'Close' in latest:
+                             if latest['Close'] > latest['BBU']:
+                                 bb_status = '上轨上方'
+                             elif latest['Close'] > latest['BBM']:
+                                 bb_status = '中轨上方'
+                             else:
+                                 bb_status = '弱势区域'
+                        
+                        # 安全获取KDJ状态
+                        kdj_status = "未知"
+                        if 'K' in latest and 'D' in latest:
+                            kdj_status = '金叉' if latest['K'] > latest['D'] else '死叉'
+
                         # 收集关键指标
                         comparison_data.append({
                             '代码': symbol,
@@ -344,8 +359,8 @@ if page == "🔥 实时涨幅榜分析":
                             '涨跌幅%': row['涨跌幅'],
                             'RSI(14)': round(latest['RSI'], 2) if 'RSI' in latest else None,
                             'MACD': round(latest['MACD'], 3) if 'MACD' in latest else None,
-                            '布林位置': '上轨上方' if latest['Close'] > latest['BBU'] else ('中轨上方' if latest['Close'] > latest['BBM'] else '弱势区域'),
-                            'KDJ状态': '金叉' if latest['K'] > latest['D'] else '死叉'
+                            '布林位置': bb_status,
+                            'KDJ状态': kdj_status
                         })
                     
                     # 更新进度
