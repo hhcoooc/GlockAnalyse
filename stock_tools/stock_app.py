@@ -6,8 +6,71 @@ import matplotlib.pyplot as plt
 import akshare as ak
 import pandas_ta as ta
 import numpy as np
+try:
+    from stock_tools import db_manager
+except ImportError:
+    import db_manager # For local run if path issues
 
 # --- 核心分析逻辑 (合并自 advanced_analysis.py) ---
+
+def get_main_force_flow(symbol):
+    """获取个股主力资金流向 (最近5天)"""
+    try:
+        # akshare 接口: stock_individual_fund_flow
+        # 需要判断市场
+        market = 'sh' if symbol.startswith('6') else 'sz' # 简单判断，北交所可能不支持
+        if symbol.startswith('8') or symbol.startswith('4') or symbol.startswith('9'):
+             # 北交所暂不支持主力资金接口，返回空
+             return None
+             
+        df = ak.stock_individual_fund_flow(stock=symbol, market=market)
+        if df is None or df.empty:
+            return None
+            
+        # 取最近5天
+        recent = df.tail(5).copy()
+        # 假设列名: 日期, 收盘价, 涨跌幅, 主力净流入, 主力净流入占比, 超大单净流入, ...
+        # 需要根据实际返回列名调整
+        return recent
+    except Exception as e:
+        print(f"获取主力资金失败: {e}")
+        return None
+
+def analyze_main_force(flow_df):
+    """分析主力动向"""
+    if flow_df is None or flow_df.empty:
+        return "暂无主力数据"
+    
+    # 累加最近5日主力净流入
+    # 注意：akshare返回的列名可能是中文
+    try:
+        net_inflow_col = [c for c in flow_df.columns if '主力净流入' in c and '占比' not in c][0]
+        # 确保是数值
+        # 有些接口返回的是带单位的字符串，需要清洗，这里假设是数值或可转数值
+        # akshare通常返回数值
+        
+        total_inflow = flow_df[net_inflow_col].sum()
+        
+        # 获取最近一天的涨跌幅
+        latest_change = flow_df.iloc[-1]['涨跌幅'] if '涨跌幅' in flow_df.columns else 0
+        
+        analysis = []
+        if total_inflow > 0:
+            analysis.append(f"近5日主力累计净流入 {total_inflow/10000:.2f} 万")
+            if latest_change < 0:
+                analysis.append("⚠️ 主力逆势吸筹 (股价跌但主力买)，疑似【偷偷买入】")
+            else:
+                analysis.append("🔥 主力资金持续流入，推动上涨")
+        else:
+            analysis.append(f"近5日主力累计净流出 {abs(total_inflow)/10000:.2f} 万")
+            if latest_change > 0:
+                analysis.append("⚠️ 主力借涨出货 (股价涨但主力卖)，疑似【偷偷卖出】")
+            else:
+                analysis.append("📉 主力资金持续流出，压制股价")
+                
+        return " | ".join(analysis)
+    except Exception as e:
+        return f"分析主力数据出错: {e}"
 
 def add_market_prefix(symbol):
     """为新浪接口添加市场前缀"""
@@ -254,7 +317,55 @@ def get_top_gainers(top_n=10):
 # 设置页面配置
 st.set_page_config(page_title="A股智能分析工具", layout="wide")
 
+# 初始化 Session State
+if 'user' not in st.session_state:
+    st.session_state.user = None
+
+# --- 登录/注册 侧边栏 ---
+with st.sidebar:
+    if st.session_state.user:
+        st.success(f"欢迎, {st.session_state.user['username']}!")
+        if st.button("退出登录"):
+            st.session_state.user = None
+            st.rerun()
+    else:
+        st.header("用户登录/注册")
+        tab1, tab2 = st.tabs(["登录", "注册"])
+        
+        with tab1:
+            l_user = st.text_input("用户名", key="l_user")
+            l_pass = st.text_input("密码", type="password", key="l_pass")
+            if st.button("登录"):
+                success, user = db_manager.login_user(l_user, l_pass)
+                if success:
+                    st.session_state.user = user
+                    st.success("登录成功！")
+                    st.rerun()
+                else:
+                    st.error("用户名或密码错误")
+        
+        with tab2:
+            r_user = st.text_input("用户名", key="r_user")
+            r_pass = st.text_input("密码", type="password", key="r_pass")
+            if st.button("注册"):
+                if r_user and r_pass:
+                    success, msg = db_manager.register_user(r_user, r_pass)
+                    if success:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("请输入用户名和密码")
+
 st.title("📈 A股智能分析与回测系统")
+
+# 检查预测结果 (仅登录用户)
+if st.session_state.user:
+    # 获取用户关注股票的最新价格用于验证
+    # 这里为了性能，暂时只在用户进入"我的自选"页面时检查，或者简单获取一下
+    # 简化处理：每次加载页面时，如果用户有待验证的预测，尝试获取当前价格验证
+    # 为了不卡顿，我们可以只在用户点击"验证预测"时触发，或者后台静默处理
+    pass 
 
 def plot_streamlit_chart(df, symbol, trade_log):
     """
@@ -294,9 +405,111 @@ def plot_streamlit_chart(df, symbol, trade_log):
     return fig
 
 # 侧边栏导航
-page = st.sidebar.radio("功能选择", ["个股详细分析", "🔥 实时涨幅榜分析"])
+nav_options = ["个股详细分析", "🔥 实时涨幅榜分析"]
+if st.session_state.user:
+    nav_options.insert(0, "👀 我的自选股")
 
-if page == "🔥 实时涨幅榜分析":
+# 显示用户战绩
+if st.session_state.user:
+    stats = db_manager.get_user_stats(st.session_state.user['id'])
+    if stats and stats['total'] > 0:
+        correct = stats['correct'] or 0
+        total = stats['correct'] + stats['incorrect'] # 只计算已验证的
+        if total > 0:
+            win_rate = (correct / total) * 100
+            st.sidebar.markdown("---")
+            st.sidebar.markdown(f"### 🏆 预测战绩")
+            st.sidebar.metric("胜率", f"{win_rate:.1f}%", f"{correct}/{total}")
+
+page = st.sidebar.radio("功能选择", nav_options)
+
+if st.session_state.user and page == "👀 我的自选股":
+    st.header("👀 我的自选股监控")
+    
+    # 获取自选股列表
+    watchlist = db_manager.get_watchlist(st.session_state.user['id'])
+    
+    if not watchlist:
+        st.info("暂无自选股，请去【个股详细分析】页面添加。")
+    else:
+        # 验证预测结果
+        if st.button("验证我的预测"):
+            with st.spinner("正在验证预测结果..."):
+                # 获取当前价格
+                current_prices = {}
+                # 优化：一次性获取所有行情，而不是循环调用接口
+                try:
+                    spot = ak.stock_zh_a_spot_em()
+                    for item in watchlist:
+                        sym = item['symbol']
+                        row = spot[spot['代码'] == sym]
+                        if not row.empty:
+                            current_prices[sym] = float(row.iloc[0]['最新价'])
+                except Exception as e:
+                    st.error(f"获取实时行情失败: {e}")
+                
+                if current_prices:
+                    msgs = db_manager.check_predictions(st.session_state.user['id'], current_prices)
+                    if msgs:
+                        for msg in msgs:
+                            st.balloons()
+                            st.success(msg)
+                    else:
+                        st.info("暂无新的预测结果验证。")
+
+        # 展示自选股卡片
+        for item in watchlist:
+            symbol = item['symbol']
+            name = item['stock_name']
+            
+            with st.expander(f"{name} ({symbol})", expanded=True):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    # 获取简要数据
+                    end_str = datetime.datetime.now().strftime("%Y%m%d")
+                    start_str = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y%m%d")
+                    df = get_stock_data(symbol, start_str, end_str)
+                    
+                    if df is not None:
+                        latest = df.iloc[-1]
+                        st.metric("最新收盘", f"{latest['Close']}", f"{(latest['Close'] - df.iloc[-2]['Close']):.2f}")
+                        st.line_chart(df['Close'])
+                        
+                        # 主力动向
+                        flow = get_main_force_flow(symbol)
+                        analysis = analyze_main_force(flow)
+                        st.markdown(f"**主力动向**: {analysis}")
+                        
+                        if flow is not None and not flow.empty:
+                            # 可视化主力资金流向
+                            try:
+                                # 假设列名包含 '主力净流入'
+                                net_inflow_col = [c for c in flow.columns if '主力净流入' in c and '占比' not in c][0]
+                                date_col = [c for c in flow.columns if '日期' in c][0]
+                                
+                                # 简单的柱状图
+                                fig_flow, ax_flow = plt.subplots(figsize=(6, 2))
+                                colors = ['red' if x > 0 else 'green' for x in flow[net_inflow_col]]
+                                ax_flow.bar(flow[date_col], flow[net_inflow_col], color=colors)
+                                ax_flow.set_title("近5日主力资金净流入")
+                                ax_flow.tick_params(axis='x', rotation=45)
+                                st.pyplot(fig_flow)
+                            except:
+                                pass
+                        
+                    else:
+                        st.error("数据获取失败")
+                
+                with col2:
+                    if st.button("移除", key=f"del_{symbol}"):
+                        db_manager.remove_from_watchlist(st.session_state.user['id'], symbol)
+                        st.rerun()
+                    
+                    if st.button("详细分析", key=f"go_{symbol}"):
+                        # 跳转逻辑比较复杂，这里简单提示用户去个股分析页
+                        st.info(f"请切换到【个股详细分析】页面输入 {symbol} 查看详情")
+
+elif page == "🔥 实时涨幅榜分析":
     st.header("🚀 实时涨幅榜前10名分析")
     st.markdown("获取当前市场涨幅最高的股票，并进行横向技术指标对比。")
     
@@ -460,6 +673,10 @@ elif page == "个股详细分析":
         
         run_btn = st.button("开始分析", type="primary")
 
+    # 初始化 Session State 用于存储分析结果
+    if 'analysis_data' not in st.session_state:
+        st.session_state.analysis_data = None
+
     if run_btn:
         if len(date_range) != 2:
             st.error("请选择完整的开始和结束日期。")
@@ -472,6 +689,7 @@ elif page == "个股详细分析":
                 
                 if df is None or df.empty:
                     st.error(f"未获取到 {symbol} 的数据，请检查代码是否正确。")
+                    st.session_state.analysis_data = None
                 else:
                     # 1. 计算指标
                     df = calculate_advanced_indicators(df)
@@ -479,62 +697,112 @@ elif page == "个股详细分析":
                     # 2. 运行回测
                     df, trade_log, total_return = run_strategy_backtest(df, initial_capital)
                     
-                    # --- 结果展示 ---
-                    
-                    # 顶部指标卡片
-                    col1, col2, col3 = st.columns(3)
-                    latest = df.iloc[-1]
-                    latest_close = latest['Close']
-                    prev_close = df.iloc[-2]['Close']
-                    change = (latest_close - prev_close) / prev_close * 100
-                    
-                    col1.metric("当前价格", f"{latest_close:.2f}", f"{change:.2f}%")
-                    col2.metric("策略收益率", f"{total_return:.2f}%", delta_color="normal")
-                    col3.metric("交易次数", f"{len(trade_log)}")
-                    
-                    # 图表区域
-                    st.subheader("📊 技术分析图表")
-                    fig = plot_streamlit_chart(df, symbol, trade_log)
-                    st.pyplot(fig)
-                    
-                    # 信号解读区域
-                    st.subheader("🤖 智能信号解读")
-                    
-                    # 综合打分逻辑 (复用 advanced_analysis 的逻辑)
-                    score = 0
-                    reasons = []
-                    if latest['Close'] > latest['BBM']:
-                        score += 1
-                        reasons.append("股价位于布林中轨上方 (强势)")
-                    if latest['Close'] > latest['BBU']:
-                        score += 1
-                        reasons.append("股价突破布林上轨 (极强/可能超买)")
-                    if latest['K'] > latest['D'] and latest['K'] < 80:
-                        score += 1
-                        reasons.append("KDJ 金叉且未钝化")
-                    elif latest['J'] > 100:
-                        score -= 1
-                        reasons.append("KDJ J值过高 (超买风险)")
-                    if latest['MACD'] > latest['MACD_signal']:
-                        score += 1
-                        reasons.append("MACD 处于多头状态")
-                    
-                    if score >= 3:
-                        st.success(f"**综合结论: 信号偏强 (得分 {score}/4)**，建议关注。")
-                    elif score <= 1:
-                        st.warning(f"**综合结论: 信号偏弱 (得分 {score}/4)**，建议观望。")
+                    # 存入 Session State
+                    st.session_state.analysis_data = {
+                        'symbol': symbol,
+                        'df': df,
+                        'trade_log': trade_log,
+                        'total_return': total_return
+                    }
+
+    # 如果有分析数据，则渲染界面 (无论是否刚点击了 run_btn)
+    if st.session_state.analysis_data:
+        data = st.session_state.analysis_data
+        symbol = data['symbol'] # 使用存储的 symbol，防止用户改了输入框但没点运行
+        df = data['df']
+        trade_log = data['trade_log']
+        total_return = data['total_return']
+
+        # --- 结果展示 ---
+        
+        # 顶部指标卡片
+        col1, col2, col3 = st.columns(3)
+        latest = df.iloc[-1]
+        latest_close = latest['Close']
+        prev_close = df.iloc[-2]['Close']
+        change = (latest_close - prev_close) / prev_close * 100
+        
+        col1.metric("当前价格", f"{latest_close:.2f}", f"{change:.2f}%")
+        col2.metric("策略收益率", f"{total_return:.2f}%", delta_color="normal")
+        col3.metric("交易次数", f"{len(trade_log)}")
+        
+        # --- 用户交互区域 (登录后可见) ---
+        if st.session_state.user:
+            st.divider()
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("❤️ 加入自选股", key="btn_add_watchlist"):
+                    # 获取股票名称 (简单起见，这里可能需要额外接口，或者用户自己输入，这里先存代码)
+                    # 尝试从akshare获取名称，或者直接存代码
+                    success, msg = db_manager.add_to_watchlist(st.session_state.user['id'], symbol, f"Stock {symbol}")
+                    if success: 
+                        st.success(msg)
+                        # 强制刷新以更新侧边栏状态 (可选)
+                    else: 
+                        st.warning(msg)
+            with c2:
+                if st.button("📈 预测看涨", key="btn_predict_up"):
+                    if db_manager.add_prediction(st.session_state.user['id'], symbol, f"Stock {symbol}", "UP", float(latest_close)):
+                        st.success("已记录看涨预测！")
                     else:
-                        st.info(f"**综合结论: 震荡行情 (得分 {score}/4)**，方向不明。")
-                        
-                    for r in reasons:
-                        st.write(f"- {r}")
-                    
-                    # 交易记录
-                    with st.expander("查看详细交易记录"):
-                        if trade_log:
-                            log_df = pd.DataFrame(trade_log)
-                            # 格式化日期
-                            log_df['日期'] = log_df['日期'].apply(lambda x: x.strftime('%Y-%m-%d'))
-                            st.table(log_df)
-                        else:
-                            st.write("在此期间无交易触发。")
+                        st.error("记录失败")
+            with c3:
+                if st.button("📉 预测看跌", key="btn_predict_down"):
+                    if db_manager.add_prediction(st.session_state.user['id'], symbol, f"Stock {symbol}", "DOWN", float(latest_close)):
+                        st.success("已记录看跌预测！")
+                    else:
+                        st.error("记录失败")
+            st.divider()
+
+        # 图表区域
+        st.subheader("📊 技术分析图表")
+        fig = plot_streamlit_chart(df, symbol, trade_log)
+        st.pyplot(fig)
+        
+        # 信号解读区域
+        st.subheader("🤖 智能信号解读")
+        
+        # 主力动向分析
+        st.markdown("### 💰 主力资金动向")
+        flow = get_main_force_flow(symbol)
+        analysis = analyze_main_force(flow)
+        st.info(analysis)
+        
+        # 综合打分逻辑 (复用 advanced_analysis 的逻辑)
+        score = 0
+        reasons = []
+        if latest['Close'] > latest['BBM']:
+            score += 1
+            reasons.append("股价位于布林中轨上方 (强势)")
+        if latest['Close'] > latest['BBU']:
+            score += 1
+            reasons.append("股价突破布林上轨 (极强/可能超买)")
+        if latest['K'] > latest['D'] and latest['K'] < 80:
+            score += 1
+            reasons.append("KDJ 金叉且未钝化")
+        elif latest['J'] > 100:
+            score -= 1
+            reasons.append("KDJ J值过高 (超买风险)")
+        if latest['MACD'] > latest['MACD_signal']:
+            score += 1
+            reasons.append("MACD 处于多头状态")
+        
+        if score >= 3:
+            st.success(f"**综合结论: 信号偏强 (得分 {score}/4)**，建议关注。")
+        elif score <= 1:
+            st.warning(f"**综合结论: 信号偏弱 (得分 {score}/4)**，建议观望。")
+        else:
+            st.info(f"**综合结论: 震荡行情 (得分 {score}/4)**，方向不明。")
+            
+        for r in reasons:
+            st.write(f"- {r}")
+        
+        # 交易记录
+        with st.expander("查看详细交易记录"):
+            if trade_log:
+                log_df = pd.DataFrame(trade_log)
+                # 格式化日期
+                log_df['日期'] = log_df['日期'].apply(lambda x: x.strftime('%Y-%m-%d'))
+                st.table(log_df)
+            else:
+                st.write("在此期间无交易触发。")

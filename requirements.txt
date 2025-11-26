@@ -4,3 +4,5 @@ matplotlib
 mplfinance
 pandas_ta
 streamlit
+mysql-connector-python
+bcrypt
