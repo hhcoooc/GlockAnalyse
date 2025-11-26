@@ -54,7 +54,9 @@ def get_connection():
         # 否则只是本地连接失败
         cwd = os.getcwd()
         if "/mount/src" in cwd or "/app" in cwd:
-            st.error("❌ 数据库连接失败。检测到云端环境，但未读取到有效的 Secrets 配置。请确保在 Streamlit Cloud 的 Advanced Settings -> Secrets 中正确粘贴了 secrets.toml 的内容（包含 [mysql] 标题）。")
+            # 调试信息：打印当前读取到的 Secrets 键名 (不打印值，防止泄露)
+            debug_keys = list(st.secrets.keys()) if hasattr(st, "secrets") else "No secrets found"
+            st.error(f"❌ 数据库连接失败。检测到云端环境，但未读取到有效的 Secrets 配置。\n\n调试信息 - 当前可用的 Secrets Keys: {debug_keys}\n\n请确保在 Streamlit Cloud 的 Advanced Settings -> Secrets 中正确粘贴了 secrets.toml 的内容（包含 [mysql] 标题）。")
         else:
             print(f"Local DB connection failed: {e}")
         return None
