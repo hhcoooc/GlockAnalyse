@@ -490,13 +490,13 @@ if st.session_state.user and page == "👀 我的自选股":
             name = item['stock_name']
             
             with st.expander(f"{name} ({symbol})", expanded=True):
+                # 获取数据 (提前获取以便两列都能使用)
+                end_str = datetime.datetime.now().strftime("%Y%m%d")
+                start_str = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y%m%d")
+                df = get_stock_data(symbol, start_str, end_str)
+
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    # 获取简要数据
-                    end_str = datetime.datetime.now().strftime("%Y%m%d")
-                    start_str = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y%m%d")
-                    df = get_stock_data(symbol, start_str, end_str)
-                    
                     if df is not None:
                         latest = df.iloc[-1]
                         st.metric("最新收盘", f"{latest['Close']}", f"{(latest['Close'] - df.iloc[-2]['Close']):.2f}")
@@ -561,13 +561,30 @@ if st.session_state.user and page == "👀 我的自选股":
                         st.error("数据获取失败")
                 
                 with col2:
-                    if st.button("移除", key=f"del_{symbol}"):
+                    if st.button("🗑️ 移除", key=f"del_{symbol}"):
                         db_manager.remove_from_watchlist(st.session_state.user['id'], symbol)
                         st.rerun()
                     
-                    if st.button("详细分析", key=f"go_{symbol}"):
+                    if st.button("📊 详细分析", key=f"go_{symbol}"):
                         # 跳转逻辑比较复杂，这里简单提示用户去个股分析页
                         st.info(f"请切换到【个股详细分析】页面输入 {symbol} 查看详情")
+                    
+                    if df is not None:
+                        st.divider()
+                        st.markdown("**🎯 趋势预测**")
+                        latest_price = float(df.iloc[-1]['Close'])
+                        
+                        if st.button("📈 看涨 (UP)", key=f"up_{symbol}", use_container_width=True):
+                            if db_manager.add_prediction(st.session_state.user['id'], symbol, name, "UP", latest_price):
+                                st.success("已记录看涨！")
+                            else:
+                                st.error("记录失败")
+                        
+                        if st.button("📉 看跌 (DOWN)", key=f"down_{symbol}", use_container_width=True):
+                            if db_manager.add_prediction(st.session_state.user['id'], symbol, name, "DOWN", latest_price):
+                                st.success("已记录看跌！")
+                            else:
+                                st.error("记录失败")
 
 elif page == "🔥 实时涨幅榜分析":
     st.header("🚀 实时涨幅榜前10名分析")
@@ -789,29 +806,14 @@ elif page == "个股详细分析":
         # --- 用户交互区域 (登录后可见) ---
         if st.session_state.user:
             st.divider()
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                if st.button("❤️ 加入自选股", key="btn_add_watchlist"):
-                    # 获取股票名称 (简单起见，这里可能需要额外接口，或者用户自己输入，这里先存代码)
-                    # 尝试从akshare获取名称，或者直接存代码
-                    success, msg = db_manager.add_to_watchlist(st.session_state.user['id'], symbol, f"Stock {symbol}")
-                    if success: 
-                        st.success(msg)
-                        # 强制刷新以更新侧边栏状态 (可选)
-                    else: 
-                        st.warning(msg)
-            with c2:
-                if st.button("📈 预测看涨", key="btn_predict_up"):
-                    if db_manager.add_prediction(st.session_state.user['id'], symbol, f"Stock {symbol}", "UP", float(latest_close)):
-                        st.success("已记录看涨预测！")
-                    else:
-                        st.error("记录失败")
-            with c3:
-                if st.button("📉 预测看跌", key="btn_predict_down"):
-                    if db_manager.add_prediction(st.session_state.user['id'], symbol, f"Stock {symbol}", "DOWN", float(latest_close)):
-                        st.success("已记录看跌预测！")
-                    else:
-                        st.error("记录失败")
+            # 仅保留加入自选股按钮，预测功能移动到自选股页面
+            if st.button("❤️ 加入自选股", key="btn_add_watchlist", type="primary", use_container_width=True):
+                success, msg = db_manager.add_to_watchlist(st.session_state.user['id'], symbol, f"Stock {symbol}")
+                if success: 
+                    st.success(msg)
+                else: 
+                    st.warning(msg)
+            st.caption("💡 提示：加入自选股后，请在【我的自选股】页面进行涨跌预测。")
             st.divider()
 
         # 图表区域
