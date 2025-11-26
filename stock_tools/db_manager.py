@@ -3,6 +3,7 @@ import bcrypt
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import os
 
 # 配置
 # 本地默认配置
@@ -14,22 +15,49 @@ LOCAL_DB_CONFIG = {
 }
 
 def get_connection():
-    # 优先尝试从 Streamlit Secrets 读取配置 (用于云端部署)
-    if hasattr(st, "secrets") and "mysql" in st.secrets:
-        try:
-            return mysql.connector.connect(
-                host=st.secrets["mysql"]["host"],
-                user=st.secrets["mysql"]["user"],
-                password=st.secrets["mysql"]["password"],
-                database=st.secrets["mysql"]["database"],
-                port=st.secrets["mysql"].get("port", 3306)
-            )
-        except Exception as e:
-            st.error(f"云端数据库连接失败: {e}")
-            return None
-            
-    # 本地回退
-    return mysql.connector.connect(**LOCAL_DB_CONFIG)
+    # 1. 尝试从 Streamlit Secrets 读取配置
+    if hasattr(st, "secrets"):
+        # 检查是否包含 [mysql] 块
+        if "mysql" in st.secrets:
+            try:
+                conf = st.secrets["mysql"]
+                return mysql.connector.connect(
+                    host=conf["host"],
+                    user=conf["user"],
+                    password=conf["password"],
+                    database=conf["database"],
+                    port=conf.get("port", 4000)
+                )
+            except Exception as e:
+                st.error(f"云端数据库连接失败 (Secrets [mysql]): {e}")
+                return None
+        
+        # 检查是否直接在根层级 (用户可能漏复制了 [mysql])
+        elif "host" in st.secrets and "user" in st.secrets:
+            try:
+                return mysql.connector.connect(
+                    host=st.secrets["host"],
+                    user=st.secrets["user"],
+                    password=st.secrets["password"],
+                    database=st.secrets["database"],
+                    port=st.secrets.get("port", 4000)
+                )
+            except Exception as e:
+                st.error(f"云端数据库连接失败 (Secrets Root): {e}")
+                return None
+
+    # 2. 本地回退
+    try:
+        return mysql.connector.connect(**LOCAL_DB_CONFIG)
+    except Exception as e:
+        # 如果是在云端环境 (通常路径包含 /mount/src 或 /app)，则提示 Secrets 问题
+        # 否则只是本地连接失败
+        cwd = os.getcwd()
+        if "/mount/src" in cwd or "/app" in cwd:
+            st.error("❌ 数据库连接失败。检测到云端环境，但未读取到有效的 Secrets 配置。请确保在 Streamlit Cloud 的 Advanced Settings -> Secrets 中正确粘贴了 secrets.toml 的内容（包含 [mysql] 标题）。")
+        else:
+            print(f"Local DB connection failed: {e}")
+        return None
 
 def get_user_stats(user_id):
     """获取用户预测战绩"""
@@ -70,6 +98,7 @@ def register_user(username, password):
 
 def login_user(username, password):
     conn = get_connection()
+    if not conn: return False, None
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
@@ -83,6 +112,7 @@ def login_user(username, password):
 
 def add_to_watchlist(user_id, symbol, name):
     conn = get_connection()
+    if not conn: return False, "数据库连接失败"
     cursor = conn.cursor()
     try:
         cursor.execute("INSERT INTO user_stocks (user_id, symbol, stock_name) VALUES (%s, %s, %s)", 
@@ -97,6 +127,7 @@ def add_to_watchlist(user_id, symbol, name):
 
 def remove_from_watchlist(user_id, symbol):
     conn = get_connection()
+    if not conn: return
     cursor = conn.cursor()
     try:
         cursor.execute("DELETE FROM user_stocks WHERE user_id = %s AND symbol = %s", (user_id, symbol))
@@ -107,6 +138,7 @@ def remove_from_watchlist(user_id, symbol):
 
 def get_watchlist(user_id):
     conn = get_connection()
+    if not conn: return []
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM user_stocks WHERE user_id = %s ORDER BY added_at DESC", (user_id,))
@@ -117,6 +149,7 @@ def get_watchlist(user_id):
 
 def add_prediction(user_id, symbol, name, p_type, current_price):
     conn = get_connection()
+    if not conn: return False
     cursor = conn.cursor()
     try:
         cursor.execute("""
@@ -138,6 +171,7 @@ def check_predictions(user_id, current_prices):
     current_prices: dict, {symbol: price}
     """
     conn = get_connection()
+    if not conn: return []
     cursor = conn.cursor(dictionary=True)
     messages = []
     try:
