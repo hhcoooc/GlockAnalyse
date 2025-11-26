@@ -151,18 +151,43 @@ def get_watchlist(user_id):
 
 def add_prediction(user_id, symbol, name, p_type, current_price):
     conn = get_connection()
-    if not conn: return False
-    cursor = conn.cursor()
+    if not conn: return False, "连接失败"
+    cursor = conn.cursor(dictionary=True)
     try:
+        # 1. 检查是否已有未完成的预测 (PENDING)
+        cursor.execute("""
+            SELECT id FROM predictions 
+            WHERE user_id = %s AND symbol = %s AND status = 'PENDING'
+        """, (user_id, symbol))
+        if cursor.fetchone():
+            return False, "该股票已有正在进行中的预测，请等待结果出炉后再预测。"
+
+        # 2. 插入新预测
         cursor.execute("""
             INSERT INTO predictions (user_id, symbol, stock_name, prediction_type, initial_price)
             VALUES (%s, %s, %s, %s, %s)
         """, (user_id, symbol, name, p_type, current_price))
         conn.commit()
-        return True
+        return True, "预测已记录！等待市场验证..."
     except Exception as e:
         print(e)
-        return False
+        return False, f"记录失败: {e}"
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_user_predictions(user_id):
+    """获取用户的所有预测记录"""
+    conn = get_connection()
+    if not conn: return []
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT * FROM predictions 
+            WHERE user_id = %s 
+            ORDER BY prediction_date DESC
+        """, (user_id,))
+        return cursor.fetchall()
     finally:
         cursor.close()
         conn.close()

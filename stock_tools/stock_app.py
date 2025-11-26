@@ -429,61 +429,80 @@ if st.session_state.user and page == "👀 我的自选股":
     # 获取自选股列表
     watchlist = db_manager.get_watchlist(st.session_state.user['id'])
     
+    # --- 自动验证逻辑 (静默执行) ---
+    if watchlist:
+        current_prices = {}
+        # 仅当市场处于交易时间或刚收盘时才频繁检查，或者每次刷新都检查一下也无妨
+        # 为了性能，我们只检查那些状态为 PENDING 的股票
+        # 但这里为了简化，我们利用 watchlist 循环顺便获取价格
+        pass # 实际获取逻辑在下面循环中，或者我们可以单独提取出来
+
+    # --- 预测记录展示区 (新功能) ---
+    st.subheader("📜 我的预测记录")
+    
+    # 1. 自动更新预测状态
+    # 获取所有 PENDING 的预测，针对性获取价格并验证
+    pending_preds = [p for p in db_manager.get_user_predictions(st.session_state.user['id']) if p['status'] == 'PENDING']
+    if pending_preds:
+        check_prices = {}
+        with st.spinner("正在同步最新市场数据以验证预测..."):
+            for p in pending_preds:
+                sym = p['symbol']
+                if sym not in check_prices: # 避免重复获取
+                    try:
+                        # 尝试获取最新价
+                        prefix_sym = add_market_prefix(sym)
+                        # 只取最近1天数据
+                        df_spot = ak.stock_zh_a_daily(symbol=prefix_sym, start_date=datetime.datetime.now().strftime("%Y%m%d"), end_date=datetime.datetime.now().strftime("%Y%m%d"))
+                        if df_spot is not None and not df_spot.empty:
+                            check_prices[sym] = float(df_spot.iloc[-1]['Close'])
+                        else:
+                            # 如果今天没数据(周末或未开盘)，取最近收盘价
+                            end_s = datetime.datetime.now().strftime("%Y%m%d")
+                            start_s = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y%m%d")
+                            df_hist = get_stock_data(sym, start_s, end_s)
+                            if df_hist is not None and not df_hist.empty:
+                                check_prices[sym] = float(df_hist.iloc[-1]['Close'])
+                    except:
+                        pass
+        
+        if check_prices:
+            # 执行验证
+            new_msgs = db_manager.check_predictions(st.session_state.user['id'], check_prices)
+            if new_msgs:
+                for msg in new_msgs:
+                    st.toast(msg, icon="🔔") # 使用 toast 轻提示，不打扰
+
+    # 2. 展示预测列表
+    predictions = db_manager.get_user_predictions(st.session_state.user['id'])
+    if predictions:
+        # 转换为 DataFrame 美化展示
+        pred_data = []
+        for p in predictions:
+            status_icon = "⏳ 进行中"
+            if p['status'] == 'CORRECT': status_icon = "✅ 预测成功"
+            elif p['status'] == 'INCORRECT': status_icon = "❌ 预测失败"
+            
+            type_str = "📈 看涨" if p['prediction_type'] == 'UP' else "📉 看跌"
+            
+            pred_data.append({
+                "股票": f"{p['stock_name']} ({p['symbol']})",
+                "方向": type_str,
+                "初始价格": p['initial_price'],
+                "预测时间": p['prediction_date'],
+                "当前状态": status_icon
+            })
+        
+        st.dataframe(pd.DataFrame(pred_data), use_container_width=True)
+    else:
+        st.info("暂无预测记录，快去下方自选股卡片里试试吧！")
+
+    st.divider()
+    st.subheader("📦 自选股管理")
+
     if not watchlist:
         st.info("暂无自选股，请去【个股详细分析】页面添加。")
     else:
-        # 验证预测结果
-        if st.button("验证我的预测"):
-            with st.spinner("正在验证预测结果..."):
-                # 获取当前价格
-                current_prices = {}
-                # 优化：一次性获取所有行情，而不是循环调用接口
-                try:
-                    # 尝试使用 akshare 的实时接口
-                    # 注意：ak.stock_zh_a_spot_em() 数据量大，网络不稳定时容易断开
-                    # 改为循环获取单个股票的实时数据，虽然慢一点但更稳定
-                    for item in watchlist:
-                        sym = item['symbol']
-                        try:
-                            # 使用新浪接口获取单个股票实时数据 (更轻量)
-                            # 需要加前缀
-                            prefix_sym = add_market_prefix(sym)
-                            df_spot = ak.stock_zh_a_daily(symbol=prefix_sym, start_date=datetime.datetime.now().strftime("%Y%m%d"), end_date=datetime.datetime.now().strftime("%Y%m%d"))
-                            
-                            # 如果取不到当天的(比如盘前)，尝试取最近收盘价
-                            if df_spot is None or df_spot.empty:
-                                # 回退：获取最近几天的历史数据取最后一行
-                                end_s = datetime.datetime.now().strftime("%Y%m%d")
-                                start_s = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y%m%d")
-                                df_hist = get_stock_data(sym, start_s, end_s)
-                                if df_hist is not None and not df_hist.empty:
-                                    current_prices[sym] = float(df_hist.iloc[-1]['Close'])
-                            else:
-                                # 注意：stock_zh_a_daily 返回的是历史日线格式，不是实时tick
-                                # 为了真正的实时，还是得用 stock_zh_a_spot_em 但为了稳定性，我们这里只做简单的回测验证
-                                # 如果是盘中，stock_zh_a_spot_em 是最好的，但容易超时
-                                # 我们尝试用 get_stock_data (已封装了重试逻辑)
-                                end_s = datetime.datetime.now().strftime("%Y%m%d")
-                                start_s = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y%m%d")
-                                df_latest = get_stock_data(sym, start_s, end_s)
-                                if df_latest is not None and not df_latest.empty:
-                                    current_prices[sym] = float(df_latest.iloc[-1]['Close'])
-                                    
-                        except Exception as inner_e:
-                            print(f"获取 {sym} 价格失败: {inner_e}")
-                            
-                except Exception as e:
-                    st.error(f"获取实时行情失败: {e}")
-                
-                if current_prices:
-                    msgs = db_manager.check_predictions(st.session_state.user['id'], current_prices)
-                    if msgs:
-                        for msg in msgs:
-                            st.balloons()
-                            st.success(msg)
-                    else:
-                        st.info("暂无新的预测结果验证。")
-
         # 展示自选股卡片
         for item in watchlist:
             symbol = item['symbol']
