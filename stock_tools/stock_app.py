@@ -594,16 +594,20 @@ if st.session_state.user and page == "👀 我的自选股":
                         latest_price = float(df.iloc[-1]['Close'])
                         
                         if st.button("📈 看涨 (UP)", key=f"up_{symbol}", use_container_width=True):
-                            if db_manager.add_prediction(st.session_state.user['id'], symbol, name, "UP", latest_price):
-                                st.success("已记录看涨！")
+                            success, msg = db_manager.add_prediction(st.session_state.user['id'], symbol, name, "UP", latest_price)
+                            if success:
+                                st.toast(msg, icon="✅")
+                                st.rerun()
                             else:
-                                st.error("记录失败")
+                                st.toast(msg, icon="⚠️")
                         
                         if st.button("📉 看跌 (DOWN)", key=f"down_{symbol}", use_container_width=True):
-                            if db_manager.add_prediction(st.session_state.user['id'], symbol, name, "DOWN", latest_price):
-                                st.success("已记录看跌！")
+                            success, msg = db_manager.add_prediction(st.session_state.user['id'], symbol, name, "DOWN", latest_price)
+                            if success:
+                                st.toast(msg, icon="✅")
+                                st.rerun()
                             else:
-                                st.error("记录失败")
+                                st.toast(msg, icon="⚠️")
 
 elif page == "🔥 实时涨幅榜分析":
     st.header("🚀 实时涨幅榜前10名分析")

@@ -2,7 +2,7 @@ import mysql.connector
 import bcrypt
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 # 配置
@@ -162,11 +162,14 @@ def add_prediction(user_id, symbol, name, p_type, current_price):
         if cursor.fetchone():
             return False, "该股票已有正在进行中的预测，请等待结果出炉后再预测。"
 
-        # 2. 插入新预测
+        # 2. 插入新预测 (使用北京时间)
+        # Streamlit Cloud 默认是 UTC 时间，需要 +8 小时
+        beijing_time = datetime.utcnow() + timedelta(hours=8)
+        
         cursor.execute("""
-            INSERT INTO predictions (user_id, symbol, stock_name, prediction_type, initial_price)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (user_id, symbol, name, p_type, current_price))
+            INSERT INTO predictions (user_id, symbol, stock_name, prediction_type, initial_price, prediction_date)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (user_id, symbol, name, p_type, current_price, beijing_time))
         conn.commit()
         return True, "预测已记录！等待市场验证..."
     except Exception as e:
