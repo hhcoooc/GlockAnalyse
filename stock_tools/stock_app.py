@@ -438,7 +438,14 @@ if st.session_state.user and page == "👀 我的自选股":
         pass # 实际获取逻辑在下面循环中，或者我们可以单独提取出来
 
     # --- 预测记录展示区 (新功能) ---
-    st.subheader("📜 我的预测记录")
+    col_h1, col_h2 = st.columns([4, 1])
+    with col_h1:
+        st.subheader("📜 我的预测记录")
+    with col_h2:
+        if st.button("🗑️ 清空记录", type="secondary", use_container_width=True):
+            if db_manager.clear_predictions(st.session_state.user['id']):
+                st.toast("预测记录已清空", icon="🗑️")
+                st.rerun()
     
     # 1. 自动更新预测状态
     # 获取所有 PENDING 的预测，针对性获取价格并验证

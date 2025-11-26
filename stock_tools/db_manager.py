@@ -154,7 +154,20 @@ def add_prediction(user_id, symbol, name, p_type, current_price):
     if not conn: return False, "连接失败"
     cursor = conn.cursor(dictionary=True)
     try:
-        # 1. 检查是否已有未完成的预测 (PENDING)
+        # 0. 获取当前北京时间
+        beijing_now = datetime.utcnow() + timedelta(hours=8)
+        today_str = beijing_now.strftime('%Y-%m-%d')
+
+        # 1. 检查该股票今天是否已经预测过 (无论状态如何，一天只能一次)
+        cursor.execute("""
+            SELECT id FROM predictions 
+            WHERE user_id = %s AND symbol = %s AND DATE(prediction_date) = %s
+        """, (user_id, symbol, today_str))
+        
+        if cursor.fetchone():
+            return False, "您今天已预测过该股票，请明天再来。"
+
+        # 2. 检查是否已有未完成的预测 (PENDING) - 双重保险，防止跨日但仍未结算的单子堆积
         cursor.execute("""
             SELECT id FROM predictions 
             WHERE user_id = %s AND symbol = %s AND status = 'PENDING'
@@ -162,19 +175,32 @@ def add_prediction(user_id, symbol, name, p_type, current_price):
         if cursor.fetchone():
             return False, "该股票已有正在进行中的预测，请等待结果出炉后再预测。"
 
-        # 2. 插入新预测 (使用北京时间)
-        # Streamlit Cloud 默认是 UTC 时间，需要 +8 小时
-        beijing_time = datetime.utcnow() + timedelta(hours=8)
-        
+        # 3. 插入新预测 (使用北京时间)
         cursor.execute("""
             INSERT INTO predictions (user_id, symbol, stock_name, prediction_type, initial_price, prediction_date)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (user_id, symbol, name, p_type, current_price, beijing_time))
+        """, (user_id, symbol, name, p_type, current_price, beijing_now))
         conn.commit()
         return True, "预测已记录！等待市场验证..."
     except Exception as e:
         print(e)
         return False, f"记录失败: {e}"
+    finally:
+        cursor.close()
+        conn.close()
+
+def clear_predictions(user_id):
+    """清空用户的所有预测记录"""
+    conn = get_connection()
+    if not conn: return False
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM predictions WHERE user_id = %s", (user_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(e)
+        return False
     finally:
         cursor.close()
         conn.close()
