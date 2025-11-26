@@ -487,15 +487,48 @@ if st.session_state.user and page == "👀 我的自选股":
                                 net_inflow_col = [c for c in flow.columns if '主力净流入' in c and '占比' not in c][0]
                                 date_col = [c for c in flow.columns if '日期' in c][0]
                                 
-                                # 简单的柱状图
-                                fig_flow, ax_flow = plt.subplots(figsize=(6, 2))
-                                colors = ['red' if x > 0 else 'green' for x in flow[net_inflow_col]]
-                                ax_flow.bar(flow[date_col], flow[net_inflow_col], color=colors)
-                                ax_flow.set_title("近5日主力资金净流入")
-                                ax_flow.tick_params(axis='x', rotation=45)
+                                # 数据处理：转换为万元
+                                flow_dates = flow[date_col].astype(str).tolist() # 确保日期是字符串
+                                flow_values = flow[net_inflow_col] / 10000 # 换算为万元
+                                
+                                # 使用 Matplotlib 绘制优化后的图表
+                                fig_flow, ax_flow = plt.subplots(figsize=(6, 3)) # 稍微调高一点
+                                
+                                # 颜色逻辑：红涨绿跌
+                                colors = ['#ff4d4d' if x > 0 else '#2ecc71' for x in flow_values]
+                                bars = ax_flow.bar(flow_dates, flow_values, color=colors, alpha=0.8)
+                                
+                                # 设置标题和标签 (使用英文以避免乱码，或者配置中文字体)
+                                ax_flow.set_title("Main Force Net Inflow (10k CNY)", fontsize=10, pad=10)
+                                ax_flow.set_ylabel("Net Inflow (10k)", fontsize=8)
+                                
+                                # 优化 X 轴日期显示
+                                plt.xticks(rotation=45, fontsize=8)
+                                plt.yticks(fontsize=8)
+                                
+                                # 添加水平零线
+                                ax_flow.axhline(0, color='black', linewidth=0.8, linestyle='-')
+                                
+                                # 在柱子上显示具体数值
+                                for bar in bars:
+                                    height = bar.get_height()
+                                    # 根据正负值调整文字位置
+                                    xy_pos = (bar.get_x() + bar.get_width() / 2, height)
+                                    xy_text = (0, 3) if height > 0 else (0, -10)
+                                    
+                                    ax_flow.annotate(f'{int(height)}',
+                                                    xy=xy_pos,
+                                                    xytext=xy_text,
+                                                    textcoords="offset points",
+                                                    ha='center', va='bottom', fontsize=7)
+                                
+                                # 去掉顶部和右侧的边框
+                                ax_flow.spines['top'].set_visible(False)
+                                ax_flow.spines['right'].set_visible(False)
+                                
                                 st.pyplot(fig_flow)
-                            except:
-                                pass
+                            except Exception as e:
+                                st.error(f"绘图出错: {e}")
                         
                     else:
                         st.error("数据获取失败")
