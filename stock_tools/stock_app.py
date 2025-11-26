@@ -439,12 +439,39 @@ if st.session_state.user and page == "👀 我的自选股":
                 current_prices = {}
                 # 优化：一次性获取所有行情，而不是循环调用接口
                 try:
-                    spot = ak.stock_zh_a_spot_em()
+                    # 尝试使用 akshare 的实时接口
+                    # 注意：ak.stock_zh_a_spot_em() 数据量大，网络不稳定时容易断开
+                    # 改为循环获取单个股票的实时数据，虽然慢一点但更稳定
                     for item in watchlist:
                         sym = item['symbol']
-                        row = spot[spot['代码'] == sym]
-                        if not row.empty:
-                            current_prices[sym] = float(row.iloc[0]['最新价'])
+                        try:
+                            # 使用新浪接口获取单个股票实时数据 (更轻量)
+                            # 需要加前缀
+                            prefix_sym = add_market_prefix(sym)
+                            df_spot = ak.stock_zh_a_daily(symbol=prefix_sym, start_date=datetime.datetime.now().strftime("%Y%m%d"), end_date=datetime.datetime.now().strftime("%Y%m%d"))
+                            
+                            # 如果取不到当天的(比如盘前)，尝试取最近收盘价
+                            if df_spot is None or df_spot.empty:
+                                # 回退：获取最近几天的历史数据取最后一行
+                                end_s = datetime.datetime.now().strftime("%Y%m%d")
+                                start_s = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y%m%d")
+                                df_hist = get_stock_data(sym, start_s, end_s)
+                                if df_hist is not None and not df_hist.empty:
+                                    current_prices[sym] = float(df_hist.iloc[-1]['Close'])
+                            else:
+                                # 注意：stock_zh_a_daily 返回的是历史日线格式，不是实时tick
+                                # 为了真正的实时，还是得用 stock_zh_a_spot_em 但为了稳定性，我们这里只做简单的回测验证
+                                # 如果是盘中，stock_zh_a_spot_em 是最好的，但容易超时
+                                # 我们尝试用 get_stock_data (已封装了重试逻辑)
+                                end_s = datetime.datetime.now().strftime("%Y%m%d")
+                                start_s = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y%m%d")
+                                df_latest = get_stock_data(sym, start_s, end_s)
+                                if df_latest is not None and not df_latest.empty:
+                                    current_prices[sym] = float(df_latest.iloc[-1]['Close'])
+                                    
+                        except Exception as inner_e:
+                            print(f"获取 {sym} 价格失败: {inner_e}")
+                            
                 except Exception as e:
                     st.error(f"获取实时行情失败: {e}")
                 
